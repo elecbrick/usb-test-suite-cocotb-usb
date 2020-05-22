@@ -2,7 +2,7 @@ import inspect
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer, ClockCycles
-from cocotb.result import TestFailure
+from cocotb.result import TestFailure, TestError
 from cocotb.utils import get_sim_time
 
 from cocotb_usb.descriptors import (Descriptor, getDescriptorRequest,
@@ -15,6 +15,8 @@ from cocotb_usb.usb.pp_packet import pp_packet
 
 from cocotb_usb.utils import grouper_tofit, assertEqual
 from cocotb_usb.monitor import UsbMonitor
+
+from explainusb import Analyze
 
 
 class UsbTest:
@@ -149,6 +151,8 @@ class UsbTest:
     @cocotb.coroutine
     def _host_send_packet(self, packet):
         """Send a USB packet."""
+        # Protocol decoder needs to see outgoing packets
+        Analyze.sent(packet)
 
         # Packet gets multiplied by 4x so we can send using the
         # usb48 clock instead of the usb12 clock.
@@ -268,12 +272,18 @@ class UsbTest:
         actual = pp_packet(result)
         nak = pp_packet(wrap_packet(handshake_packet(PID.NAK)))
         if (actual == nak) and (expected != nak):
-            self.dut._log.warn("Got NAK, retry")
+            self.dut._log.warning("Got NAK, retry")
             yield Timer(self.RETRY_INTERVAL, 'us')
             return
         else:
             self.retry = False
-            assertEqual(expected, actual, msg)
+            if expected==actual:
+                #self.dut._log.info("Received expected {}".format(msg))
+                Analyze.received(actual)
+            else:
+                #self.dut._log.warning(msg)
+                Analyze.explain(actual, expected)
+                raise TestError(msg)
 
     @cocotb.coroutine
     def host_expect_ack(self):
